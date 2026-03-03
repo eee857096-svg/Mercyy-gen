@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
+from discord import option
 import os
 import asyncio
 import time
@@ -23,15 +23,13 @@ CASHAPP_TAG = "$ASHZ67"
 
 # ── Cooldowns (seconds per tier) ─────────────────────────────────────────────
 COOLDOWNS = {
-    "free":    24 * 3600,   # 24 hours
-    "premium": 12 * 3600,   # 12 hours
-    "booster":  6 * 3600,   #  6 hours
+    "free":    24 * 3600,
+    "premium": 12 * 3600,
+    "booster":  6 * 3600,
 }
-# In-memory store: { tier: { user_id: last_gen_timestamp } }
 cooldown_store: dict[str, dict[int, float]] = {t: {} for t in COOLDOWNS}
 
 def check_cooldown(tier: str, user_id: int) -> float | None:
-    """Returns remaining seconds if still on cooldown, else None."""
     last = cooldown_store[tier].get(user_id)
     if last is None:
         return None
@@ -59,9 +57,9 @@ intents.message_content = True
 intents.members = True
 intents.presences = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = discord.Bot(intents=intents)
 
-# ── Stock storage (flat files in ./stock/) ────────────────────────────────────
+# ── Stock storage ─────────────────────────────────────────────────────────────
 STOCK_DIR = Path("stock")
 STOCK_DIR.mkdir(exist_ok=True)
 
@@ -91,7 +89,6 @@ SERVICES = {"roblox": "Roblox"}
 #  VIEWS
 # ═════════════════════════════════════════════════════════════════════════════
 
-# ── Gen Select Dropdown ───────────────────────────────────────────────────────
 class GenSelect(discord.ui.Select):
     def __init__(self, tier: str):
         self.tier = tier
@@ -150,8 +147,8 @@ class GenSelect(discord.ui.Select):
         if remaining is not None:
             cd_display = {"free": "24h", "premium": "12h", "booster": "6h"}
             await interaction.followup.send(
-                f"⏳ **Cooldown active!** You can generate again in **{fmt_time(remaining)}**.\n"
-                f"*{self.tier.capitalize()} tier cooldown: {cd_display[self.tier]}*",
+                f"⏳ **Cooldown active!** Come back in **{fmt_time(remaining)}**.\n"
+                f"*{self.tier.capitalize()} cooldown: {cd_display[self.tier]}*",
                 ephemeral=True)
             return
 
@@ -163,13 +160,11 @@ class GenSelect(discord.ui.Select):
                 ephemeral=True)
             return
 
-        # Apply cooldown only after a successful gen
         set_cooldown(self.tier, member.id)
-
         cd_display = {"free": "24h", "premium": "12h", "booster": "6h"}
         await interaction.followup.send(
             f"✅ **{SERVICES[service]} Account**\n```\n{account}\n```\n"
-            f"⏱️ *Your next gen is available in {cd_display[self.tier]}. Keep this account private!*",
+            f"⏱️ *Next gen available in {cd_display[self.tier]}. Keep this account private!*",
             ephemeral=True)
 
 
@@ -180,26 +175,25 @@ class GenPanelView(discord.ui.View):
 
     @discord.ui.button(label="generate", style=discord.ButtonStyle.success,
                        emoji="🤖", custom_id="btn_generate_placeholder")
-    async def generate_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def generate_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.send_message(
             "Use the dropdown above to select a service!", ephemeral=True)
 
     @discord.ui.button(label="upgrade", style=discord.ButtonStyle.primary,
                        emoji="⬆️", custom_id="btn_upgrade")
-    async def upgrade_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def upgrade_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.send_message(
             f"💎 **Upgrade to Premium**\nCashApp: `{CASHAPP_TAG}`\n"
             f"Then open a ticket in <#{PREM_BUY_CHANNEL}>!", ephemeral=True)
 
     @discord.ui.button(label="stock", style=discord.ButtonStyle.secondary,
                        emoji="📦", custom_id="btn_stock_view")
-    async def stock_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def stock_btn(self, button: discord.ui.Button, interaction: discord.Interaction):
         lines = [f"🎮 **Roblox**: `{stock_count('roblox')}` accounts"]
         await interaction.response.send_message(
             "📦 **Current Stock**\n" + "\n".join(lines), ephemeral=True)
 
 
-# ── Reaction Role View ────────────────────────────────────────────────────────
 class ReactionRoleView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -218,33 +212,32 @@ class ReactionRoleView(discord.ui.View):
 
     @discord.ui.button(label="Announcements", style=discord.ButtonStyle.secondary,
                        emoji="📢", custom_id="rr_announce")
-    async def announce(self, i: discord.Interaction, b: discord.ui.Button):
-        await self._toggle_role(i, ROLE_ANNOUNCE, "Announcements")
+    async def announce(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._toggle_role(interaction, ROLE_ANNOUNCE, "Announcements")
 
     @discord.ui.button(label="Restock Ping", style=discord.ButtonStyle.secondary,
                        emoji="🔄", custom_id="rr_restock")
-    async def restock(self, i: discord.Interaction, b: discord.ui.Button):
-        await self._toggle_role(i, ROLE_RESTOCK, "Restock")
+    async def restock(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._toggle_role(interaction, ROLE_RESTOCK, "Restock")
 
     @discord.ui.button(label="Giveaway Ping", style=discord.ButtonStyle.secondary,
                        emoji="🎉", custom_id="rr_giveaway")
-    async def giveaway(self, i: discord.Interaction, b: discord.ui.Button):
-        await self._toggle_role(i, ROLE_GIVEAWAY, "Giveaway")
+    async def giveaway(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._toggle_role(interaction, ROLE_GIVEAWAY, "Giveaway")
 
     @discord.ui.button(label="Drop Ping", style=discord.ButtonStyle.secondary,
                        emoji="💧", custom_id="rr_drop")
-    async def drop(self, i: discord.Interaction, b: discord.ui.Button):
-        await self._toggle_role(i, ROLE_DROP, "Drop")
+    async def drop(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._toggle_role(interaction, ROLE_DROP, "Drop")
 
 
-# ── Ticket Views ──────────────────────────────────────────────────────────────
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="Open Ticket", style=discord.ButtonStyle.danger,
                        emoji="🎫", custom_id="ticket_open")
-    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def open_ticket(self, button: discord.ui.Button, interaction: discord.Interaction):
         guild  = interaction.guild
         member = interaction.user
         existing = discord.utils.get(guild.text_channels, name=f"ticket-{member.name.lower()}")
@@ -285,13 +278,12 @@ class CloseTicketView(discord.ui.View):
 
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger,
                        emoji="🔒", custom_id="ticket_close")
-    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def close(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.send_message("Closing ticket in 5 seconds...")
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
 
-# ── Purchase View ─────────────────────────────────────────────────────────────
 class PurchaseView(discord.ui.View):
     def __init__(self, product: str):
         super().__init__(timeout=None)
@@ -299,16 +291,18 @@ class PurchaseView(discord.ui.View):
 
     @discord.ui.button(label="Purchase", style=discord.ButtonStyle.success,
                        emoji="💳", custom_id="purchase_btn")
-    async def purchase(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def purchase(self, button: discord.ui.Button, interaction: discord.Interaction):
         embed = discord.Embed(
             title=f"💳 Purchase {self.product}",
             description=(
-                f"**Send payment to CashApp:** `{CASHAPP_TAG}`\n\n"
-                "After paying:\n"
-                "1. Screenshot your payment\n"
-                "2. Open a ticket\n"
-                "3. Send proof + your Discord username\n\n"
-                "⚡ Roles given within 24 hours."
+                f"**Payment Method:** CashApp only\n"
+                f"**CashApp Tag:** `{CASHAPP_TAG}`\n\n"
+                "**How to purchase:**\n"
+                "1. Click **Purchase** below\n"
+                "2. Send payment via CashApp\n"
+                "3. Open a ticket with proof\n"
+                "4. Receive your role!\n\n"
+                "*Roles given within 24 hours of payment verification.*"
             ),
             color=0xf5c518
         )
@@ -329,28 +323,19 @@ async def on_ready():
     bot.add_view(CloseTicketView())
     bot.add_view(PurchaseView("Premium"))
     bot.add_view(PurchaseView("Booster"))
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅  Synced {len(synced)} slash commands")
-    except Exception as e:
-        print(f"❌  Sync error: {e}")
+    print(f"✅  All views registered")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  SLASH COMMANDS
 # ═════════════════════════════════════════════════════════════════════════════
 
-@bot.tree.command(name="setup-gen", description="Post a gen panel (Admin only)")
-@app_commands.describe(tier="free / premium / booster")
-@app_commands.choices(tier=[
-    app_commands.Choice(name="free",    value="free"),
-    app_commands.Choice(name="premium", value="premium"),
-    app_commands.Choice(name="booster", value="booster"),
-])
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_gen(interaction: discord.Interaction, tier: app_commands.Choice[str]):
-    t = tier.value
-    colours = {"free": 0x57f287, "premium": 0xf5c518, "booster": 0xff73fa}
+@bot.slash_command(name="setup_gen", description="Post a gen panel (Admin only)")
+@discord.default_permissions(administrator=True)
+@option("tier", description="free / premium / booster",
+        choices=["free", "premium", "booster"])
+async def setup_gen(ctx: discord.ApplicationContext, tier: str):
+    colours  = {"free": 0x57f287, "premium": 0xf5c518, "booster": 0xff73fa}
     cd_info  = {"free": "24 hours", "premium": "12 hours", "booster": "6 hours"}
     descs = {
         "free": (
@@ -376,50 +361,47 @@ async def setup_gen(interaction: discord.Interaction, tier: app_commands.Choice[
             f"📦 **stocks** — exclusive accounts for boosters\n"
             f"🛡️ **safety** — generated accounts are secured\n"
             f"⭐ **accounts** — all checked before restocking\n"
-            f"💰 **pricing** — boost the server or purchase in <#{BOOST_BUY_CHANNEL}>\n"
+            f"💰 **pricing** — boost or purchase in <#{BOOST_BUY_CHANNEL}>\n"
             f"⏱️ **cooldown** — `{cd_info['booster']}` between gens"
         ),
     }
     embed = discord.Embed(
-        title=f"✨ Mercyy Gen — {t.capitalize()} Generator",
-        description=descs[t],
-        color=colours[t]
-    )
+        title=f"✨ Mercyy Gen — {tier.capitalize()} Generator",
+        description=descs[tier], color=colours[tier])
     embed.set_footer(text="Mercyy Gen • Roblox accounts only")
-    await interaction.channel.send(embed=embed, view=GenPanelView(t))
-    await interaction.response.send_message("✅ Gen panel posted!", ephemeral=True)
+    await ctx.channel.send(embed=embed, view=GenPanelView(tier))
+    await ctx.respond("✅ Gen panel posted!", ephemeral=True)
 
 
-@bot.tree.command(name="restock", description="Restock accounts from a .txt file (Admin only)")
-@app_commands.describe(service="Service to restock", file="Text file — one account per line")
-@app_commands.choices(service=[app_commands.Choice(name="Roblox", value="roblox")])
-@app_commands.checks.has_permissions(administrator=True)
-async def restock(interaction: discord.Interaction,
-                  service: app_commands.Choice[str],
-                  file: discord.Attachment):
-    await interaction.response.defer(ephemeral=True)
+@bot.slash_command(name="restock", description="Restock accounts from a .txt file (Admin only)")
+@discord.default_permissions(administrator=True)
+@option("service", description="Service to restock", choices=["roblox"])
+@option("file", description="Text file — one account per line",
+        input_type=discord.Attachment)
+async def restock(ctx: discord.ApplicationContext, service: str, file: discord.Attachment):
+    await ctx.defer(ephemeral=True)
     if not file.filename.endswith(".txt"):
-        await interaction.followup.send("❌ Please upload a `.txt` file.", ephemeral=True)
+        await ctx.respond("❌ Please upload a `.txt` file.", ephemeral=True)
         return
     content = (await file.read()).decode("utf-8", errors="ignore")
     new_accounts = [l.strip() for l in content.splitlines() if l.strip()]
     if not new_accounts:
-        await interaction.followup.send("❌ File is empty or invalid.", ephemeral=True)
+        await ctx.respond("❌ File is empty or invalid.", ephemeral=True)
         return
-    existing = read_stock(service.value)
+    existing = read_stock(service)
     combined = existing + new_accounts
-    stock_file(service.value).write_text("\n".join(combined))
+    stock_file(service).write_text("\n".join(combined))
     count = len(new_accounts)
     total = len(combined)
 
     restock_ch = bot.get_channel(RESTOCK_CHANNEL)
     if restock_ch:
-        restock_role = interaction.guild.get_role(ROLE_RESTOCK)
+        restock_role = ctx.guild.get_role(ROLE_RESTOCK)
         ping = restock_role.mention if restock_role else ""
         embed = discord.Embed(
             title="🔄 Restock!",
             description=(
-                f"**{service.name}** has been restocked!\n\n"
+                f"**{service.capitalize()}** has been restocked!\n\n"
                 f"➕ **Added:** `{count}` accounts\n"
                 f"📦 **Total Stock:** `{total}` accounts"
             ),
@@ -428,24 +410,24 @@ async def restock(interaction: discord.Interaction,
         embed.set_footer(text="Mercyy Gen")
         await restock_ch.send(content=ping, embed=embed)
 
-    await interaction.followup.send(
-        f"✅ Restocked **{service.name}** with `{count}` accounts. Total: `{total}`",
+    await ctx.respond(
+        f"✅ Restocked **{service.capitalize()}** with `{count}` accounts. Total: `{total}`",
         ephemeral=True)
 
 
-@bot.tree.command(name="stock", description="View current stock counts")
-async def stock_cmd(interaction: discord.Interaction):
+@bot.slash_command(name="stock", description="View current stock counts")
+async def stock_cmd(ctx: discord.ApplicationContext):
     embed = discord.Embed(
         title="📦 Mercyy Gen Stock",
         description=f"🎮 **Roblox:** `{stock_count('roblox')}` accounts",
         color=0x2b2d31
     )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await ctx.respond(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="cooldown", description="Check your remaining cooldown")
-async def cooldown_cmd(interaction: discord.Interaction):
-    member = interaction.user
+@bot.slash_command(name="cooldown", description="Check your remaining cooldowns")
+async def cooldown_cmd(ctx: discord.ApplicationContext):
+    member = ctx.user
     lines  = []
     for tier in ("free", "premium", "booster"):
         rem = check_cooldown(tier, member.id)
@@ -453,40 +435,29 @@ async def cooldown_cmd(interaction: discord.Interaction):
             lines.append(f"**{tier.capitalize()}:** ⏳ `{fmt_time(rem)}` remaining")
         else:
             lines.append(f"**{tier.capitalize()}:** ✅ Ready")
-    embed = discord.Embed(
-        title="⏱️ Your Cooldowns",
-        description="\n".join(lines),
-        color=0x5865f2
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    embed = discord.Embed(title="⏱️ Your Cooldowns",
+                          description="\n".join(lines), color=0x5865f2)
+    await ctx.respond(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="reset-cooldown", description="Reset a user's cooldown (Admin only)")
-@app_commands.describe(member="The user to reset", tier="Which tier to reset")
-@app_commands.choices(tier=[
-    app_commands.Choice(name="free",    value="free"),
-    app_commands.Choice(name="premium", value="premium"),
-    app_commands.Choice(name="booster", value="booster"),
-    app_commands.Choice(name="all",     value="all"),
-])
-@app_commands.checks.has_permissions(administrator=True)
-async def reset_cooldown(interaction: discord.Interaction,
-                         member: discord.Member,
-                         tier: app_commands.Choice[str]):
-    if tier.value == "all":
+@bot.slash_command(name="reset_cooldown", description="Reset a user's cooldown (Admin only)")
+@discord.default_permissions(administrator=True)
+@option("member", description="The user to reset", input_type=discord.Member)
+@option("tier", description="Which tier to reset",
+        choices=["free", "premium", "booster", "all"])
+async def reset_cooldown(ctx: discord.ApplicationContext, member: discord.Member, tier: str):
+    if tier == "all":
         for t in COOLDOWNS:
             cooldown_store[t].pop(member.id, None)
-        await interaction.response.send_message(
-            f"✅ Reset **all** cooldowns for {member.mention}.", ephemeral=True)
+        await ctx.respond(f"✅ Reset **all** cooldowns for {member.mention}.", ephemeral=True)
     else:
-        cooldown_store[tier.value].pop(member.id, None)
-        await interaction.response.send_message(
-            f"✅ Reset **{tier.value}** cooldown for {member.mention}.", ephemeral=True)
+        cooldown_store[tier].pop(member.id, None)
+        await ctx.respond(f"✅ Reset **{tier}** cooldown for {member.mention}.", ephemeral=True)
 
 
-@bot.tree.command(name="setup-reaction-roles", description="Post reaction role panel (Admin only)")
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_rr(interaction: discord.Interaction):
+@bot.slash_command(name="setup_reaction_roles", description="Post reaction role panel (Admin only)")
+@discord.default_permissions(administrator=True)
+async def setup_rr(ctx: discord.ApplicationContext):
     embed = discord.Embed(
         title="🔔 Notification Roles",
         description=(
@@ -499,13 +470,13 @@ async def setup_rr(interaction: discord.Interaction):
         color=0x5865f2
     )
     embed.set_footer(text="Mercyy Gen • Click to toggle")
-    await interaction.channel.send(embed=embed, view=ReactionRoleView())
-    await interaction.response.send_message("✅ Reaction roles panel posted!", ephemeral=True)
+    await ctx.channel.send(embed=embed, view=ReactionRoleView())
+    await ctx.respond("✅ Reaction roles panel posted!", ephemeral=True)
 
 
-@bot.tree.command(name="setup-tickets", description="Post the ticket panel (Admin only)")
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_tickets(interaction: discord.Interaction):
+@bot.slash_command(name="setup_tickets", description="Post the ticket panel (Admin only)")
+@discord.default_permissions(administrator=True)
+async def setup_tickets(ctx: discord.ApplicationContext):
     embed = discord.Embed(
         title="🎫 Support Tickets",
         description=(
@@ -516,21 +487,17 @@ async def setup_tickets(interaction: discord.Interaction):
         ),
         color=0xed4245
     )
-    await interaction.channel.send(embed=embed, view=TicketView())
-    await interaction.response.send_message("✅ Ticket panel posted!", ephemeral=True)
+    await ctx.channel.send(embed=embed, view=TicketView())
+    await ctx.respond("✅ Ticket panel posted!", ephemeral=True)
 
 
-@bot.tree.command(name="setup-purchase", description="Post purchase panel (Admin only)")
-@app_commands.describe(product="premium or booster")
-@app_commands.choices(product=[
-    app_commands.Choice(name="Premium", value="Premium"),
-    app_commands.Choice(name="Booster", value="Booster"),
-])
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_purchase(interaction: discord.Interaction, product: app_commands.Choice[str]):
+@bot.slash_command(name="setup_purchase", description="Post purchase panel (Admin only)")
+@discord.default_permissions(administrator=True)
+@option("product", description="premium or booster", choices=["Premium", "Booster"])
+async def setup_purchase(ctx: discord.ApplicationContext, product: str):
     colours = {"Premium": 0xf5c518, "Booster": 0xff73fa}
     embed = discord.Embed(
-        title=f"{'💎' if product.value == 'Premium' else '⚡'} Buy {product.value}",
+        title=f"{'💎' if product == 'Premium' else '⚡'} Buy {product}",
         description=(
             f"**Payment Method:** CashApp only\n"
             f"**CashApp Tag:** `{CASHAPP_TAG}`\n\n"
@@ -541,33 +508,18 @@ async def setup_purchase(interaction: discord.Interaction, product: app_commands
             "4. Receive your role!\n\n"
             "*Roles given within 24 hours of payment verification.*"
         ),
-        color=colours[product.value]
+        color=colours[product]
     )
-    await interaction.channel.send(embed=embed, view=PurchaseView(product.value))
-    await interaction.response.send_message("✅ Purchase panel posted!", ephemeral=True)
+    await ctx.channel.send(embed=embed, view=PurchaseView(product))
+    await ctx.respond("✅ Purchase panel posted!", ephemeral=True)
 
 
-@bot.tree.command(name="clear-stock", description="Clear all stock for a service (Admin only)")
-@app_commands.describe(service="Service to clear")
-@app_commands.choices(service=[app_commands.Choice(name="Roblox", value="roblox")])
-@app_commands.checks.has_permissions(administrator=True)
-async def clear_stock(interaction: discord.Interaction, service: app_commands.Choice[str]):
-    stock_file(service.value).write_text("")
-    await interaction.response.send_message(
-        f"✅ Cleared all **{service.name}** stock.", ephemeral=True)
-
-
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message(
-            "❌ You don't have permission to use this command.", ephemeral=True)
-    else:
-        try:
-            await interaction.response.send_message(f"❌ Error: {error}", ephemeral=True)
-        except Exception:
-            pass
-        raise error
+@bot.slash_command(name="clear_stock", description="Clear all stock for a service (Admin only)")
+@discord.default_permissions(administrator=True)
+@option("service", description="Service to clear", choices=["roblox"])
+async def clear_stock(ctx: discord.ApplicationContext, service: str):
+    stock_file(service).write_text("")
+    await ctx.respond(f"✅ Cleared all **{service.capitalize()}** stock.", ephemeral=True)
 
 
 bot.run(TOKEN)
