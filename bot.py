@@ -102,11 +102,17 @@ class GenSelect(discord.ui.Select):
         options = [discord.SelectOption(label="Roblox", value="roblox", emoji="🎮",
                                         description=f"{stock_count('roblox')} accounts in stock")]
         super().__init__(placeholder="✨ Select a service to generate...",
-                         options=options, custom_id=f"gen_select_{tier}")
+                         options=options, custom_id=f"gen_select_{tier}",
+                         min_values=1, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         service = self.values[0]
+        # Reset the select after use — update the original message so dropdown resets
+        try:
+            await interaction.edit_original_response(content="")
+        except Exception:
+            pass
         member  = interaction.user
         guild   = interaction.guild
 
@@ -122,12 +128,21 @@ class GenSelect(discord.ui.Select):
                 return
             status_ok = False
             for act in member.activities:
+                # CustomActivity covers custom Discord statuses
                 if isinstance(act, discord.CustomActivity):
-                    text = (act.name or "") + (act.state or "")
-                    if REQUIRED_STATUS in text:
+                    name_text  = (act.name  or "").lower()
+                    state_text = (act.state or "").lower()
+                    if REQUIRED_STATUS.lower() in name_text or REQUIRED_STATUS.lower() in state_text:
                         status_ok = True
-                if hasattr(act, "state") and act.state and REQUIRED_STATUS in act.state:
-                    status_ok = True
+                        break
+                # Catch any other activity type that may carry the text
+                for attr in ("name", "state", "details", "large_image_text", "small_image_text"):
+                    val = getattr(act, attr, None)
+                    if val and REQUIRED_STATUS.lower() in str(val).lower():
+                        status_ok = True
+                        break
+                if status_ok:
+                    break
             if not status_ok:
                 embed = discord.Embed(
                     title="❌ Status Required",
