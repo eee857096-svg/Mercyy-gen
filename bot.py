@@ -189,13 +189,14 @@ class GenSelect(discord.ui.Select):
             if mr and mr not in member.roles:
                 await err(interaction, "You need the **Member** role to use free gen.")
                 return
-            if not has_status(member):
-                await err(interaction,
-                    f"Your Discord **custom status** must contain `{REQUIRED_STATUS}`\n\n"
-                    f"**How to set it:**\n"
-                    f"Click your avatar → **Set Custom Status** → type `{REQUIRED_STATUS}`\n\n"
-                    f"Already set it? Use `/checkstatus` to verify the bot can see it.")
-                return
+            # STATUS CHECK DISABLED — re-enable when ready
+            # if not has_status(member):
+            #     await err(interaction,
+            #         f"Your Discord **custom status** must contain `{REQUIRED_STATUS}`\n\n"
+            #         f"**How to set it:**\n"
+            #         f"Click your avatar → **Set Custom Status** → type `{REQUIRED_STATUS}`\n\n"
+            #         f"Already set it? Use `/checkstatus` to verify the bot can see it.")
+            #     return
 
         elif tier == "premium":
             pr = interaction.guild.get_role(ROLE_PREMIUM)
