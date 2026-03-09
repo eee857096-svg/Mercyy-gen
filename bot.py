@@ -1,12 +1,20 @@
+"""
+╔══════════════════════════════════════════════╗
+║          MERCYY GEN  —  v3.0                 ║
+║      Roblox Account Generator Bot           ║
+╚══════════════════════════════════════════════╝
+"""
+
 import discord
 from discord.ext import commands
 from discord import app_commands
 import os, asyncio, time, json
 from pathlib import Path
+from datetime import datetime, timezone
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ══════════════════════════════════════════════════════════════════
 #  CONFIG
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ══════════════════════════════════════════════════════════════════
 REQUIRED_STATUS   = ".gg/VQ3YNgSr"
 RESTOCK_CHANNEL   = 1478365146999947368
 PREM_BUY_CHANNEL  = 1478365160476381254
@@ -23,68 +31,75 @@ CASHAPP_TAG = "$ASHZ67"
 
 BOOST_TIERS = {1: "2 Weeks", 2: "1 Month", 4: "2 Months", 6: "3 Months"}
 
-COOLDOWNS  = {"free": 86400, "premium": 43200, "booster": 21600}
+COOLDOWNS  = {"free": 86_400, "premium": 43_200, "booster": 21_600}
 TIER_COLOR = {"free": 0x57f287, "premium": 0xf5c518, "booster": 0xff73fa}
-TIER_ICON  = {"free": "🆓", "premium": "⭐", "booster": "⚡"}
-TIER_CD    = {"free": "24h", "premium": "12h", "booster": "6h"}
+TIER_ICON  = {"free": "🆓",    "premium": "⭐",      "booster": "⚡"}
+TIER_CD    = {"free": "24h",   "premium": "12h",     "booster": "6h"}
+
+TICKET_CATS = [
+    ("🛒", "purchase", "Buy Premium or Booster access",  0xf5c518),
+    ("🛠️", "support",  "Help with accounts or issues",   0x5865f2),
+    ("⚠️", "report",   "Report a user or bug",           0xed4245),
+    ("💬", "other",    "Anything else",                  0x8b8ff7),
+]
+
+RR_ROLES = [
+    ("🔥", ROLE_DROP,     "Drop Pings"),
+    ("📢", ROLE_ANNOUNCE, "Announcement Pings"),
+    ("✅", ROLE_GIVEAWAY, "Giveaway Pings"),
+    ("👑", ROLE_RESTOCK,  "Restock Pings"),
+]
 
 TOKEN = os.environ["TOKEN"]
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  BOT
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ══════════════════════════════════════════════════════════════════
+#  BOT SETUP
+# ══════════════════════════════════════════════════════════════════
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot     = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  COOLDOWNS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-cooldown_store: dict[str, dict[int, float]] = {t: {} for t in COOLDOWNS}
+# ══════════════════════════════════════════════════════════════════
+#  PERSISTENT STORAGE
+# ══════════════════════════════════════════════════════════════════
+DATA_DIR   = Path("data");    DATA_DIR.mkdir(exist_ok=True)
+STOCK_DIR  = Path("stock");   STOCK_DIR.mkdir(exist_ok=True)
+TICKET_DIR = Path("tickets"); TICKET_DIR.mkdir(exist_ok=True)
+TICKET_DB  = DATA_DIR / "tickets.json"
 
-def get_cooldown(tier: str, uid: int):
-    last = cooldown_store[tier].get(uid)
-    if last is None:
-        return None
-    rem = COOLDOWNS[tier] - (time.monotonic() - last)
-    return rem if rem > 0 else None
+def _tdb() -> dict:
+    try:
+        return json.loads(TICKET_DB.read_text("utf-8")) if TICKET_DB.exists() else {}
+    except Exception:
+        return {}
 
-def set_cooldown(tier: str, uid: int):
-    cooldown_store[tier][uid] = time.monotonic()
+def _tsave(d: dict):
+    TICKET_DB.write_text(json.dumps(d, indent=2), "utf-8")
 
-def fmt(s: float) -> str:
-    s = int(s)
-    h, r = divmod(s, 3600)
-    m, s = divmod(r, 60)
-    out = []
-    if h: out.append(f"{h}h")
-    if m: out.append(f"{m}m")
-    if s or not out: out.append(f"{s}s")
-    return " ".join(out)
+def t_next() -> int:
+    d = _tdb(); n = d.get("_count", 0) + 1
+    d["_count"] = n; _tsave(d); return n
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  STATUS CHECK
-#  MUST use guild.get_member() — NOT fetch_member()
-#  fetch_member() uses REST API which strips activity data.
-#  get_member() reads from gateway cache which has presences.
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-def has_status(member: discord.Member) -> bool:
-    needle = REQUIRED_STATUS.lower()
-    for act in member.activities:
-        if isinstance(act, discord.CustomActivity):
-            if needle in (act.name or "").lower():
-                return True
-            if needle in (act.state or "").lower():
-                return True
-    return False
+def t_save(cid: int, meta: dict):
+    d = _tdb(); d[str(cid)] = meta; _tsave(d)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  STOCK
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STOCK = Path("stock")
-STOCK.mkdir(exist_ok=True)
+def t_get(cid: int) -> dict | None:
+    return _tdb().get(str(cid))
+
+def t_del(cid: int):
+    d = _tdb(); d.pop(str(cid), None); _tsave(d)
+
+def t_by_user(uid: int) -> int | None:
+    for k, v in _tdb().items():
+        if k.startswith("_"): continue
+        if isinstance(v, dict) and v.get("user_id") == uid:
+            return int(k)
+    return None
+
+def t_total() -> int:
+    return _tdb().get("_count", 0)
 
 def sf(svc: str, tier: str) -> Path:
-    return STOCK / (f"{svc}.txt" if tier == "free" else f"{svc}_{tier}.txt")
+    return STOCK_DIR / (f"{svc}.txt" if tier == "free" else f"{svc}_{tier}.txt")
 
 def sread(svc: str, tier: str) -> list[str]:
     f = sf(svc, tier)
@@ -92,8 +107,7 @@ def sread(svc: str, tier: str) -> list[str]:
 
 def spop(svc: str, tier: str) -> str | None:
     lines = sread(svc, tier)
-    if not lines:
-        return None
+    if not lines: return None
     sf(svc, tier).write_text("\n".join(lines[1:]), "utf-8")
     return lines[0]
 
@@ -103,154 +117,187 @@ def sadd(svc: str, tier: str, accs: list[str]):
 def sc(svc: str, tier: str) -> int:
     return len(sread(svc, tier))
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  REACTION ROLES
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-RR = [
-    ("🔥", ROLE_DROP,     "Drop Ping"),
-    ("📢", ROLE_ANNOUNCE, "Announcement Ping"),
-    ("✅", ROLE_GIVEAWAY, "Giveaway Ping"),
-    ("👑", ROLE_RESTOCK,  "Restock Ping"),
-]
+# ══════════════════════════════════════════════════════════════════
+#  COOLDOWNS
+# ══════════════════════════════════════════════════════════════════
+cd_store: dict[str, dict[int, float]] = {t: {} for t in COOLDOWNS}
 
+def cd_get(tier: str, uid: int) -> float | None:
+    last = cd_store[tier].get(uid)
+    if last is None: return None
+    rem = COOLDOWNS[tier] - (time.monotonic() - last)
+    return rem if rem > 0 else None
+
+def cd_set(tier: str, uid: int):
+    cd_store[tier][uid] = time.monotonic()
+
+def fmt(s: float) -> str:
+    s = int(s)
+    h, r = divmod(s, 3600); m, s = divmod(r, 60)
+    parts = []
+    if h: parts.append(f"{h}h")
+    if m: parts.append(f"{m}m")
+    if s or not parts: parts.append(f"{s}s")
+    return " ".join(parts)
+
+# ══════════════════════════════════════════════════════════════════
+#  UTILITY
+# ══════════════════════════════════════════════════════════════════
+def has_status(m: discord.Member) -> bool:
+    needle = REQUIRED_STATUS.lower()
+    for act in m.activities:
+        if isinstance(act, discord.CustomActivity):
+            if needle in (act.name  or "").lower(): return True
+            if needle in (act.state or "").lower(): return True
+    return False
+
+def is_staff(m: discord.Member) -> bool:
+    return m.guild_permissions.administrator
+
+def gicon(g: discord.Guild) -> str | None:
+    return g.icon.url if g.icon else None
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+async def reply(i: discord.Interaction, desc: str,
+                color: int = 0xff4444, ephemeral: bool = True):
+    e = discord.Embed(description=desc, color=color)
+    try:
+        if i.response.is_done():
+            await i.followup.send(embed=e, ephemeral=ephemeral)
+        else:
+            await i.response.send_message(embed=e, ephemeral=ephemeral)
+    except Exception:
+        pass
+
+# ══════════════════════════════════════════════════════════════════
+#  REACTION ROLES
+# ══════════════════════════════════════════════════════════════════
 @bot.event
 async def on_raw_reaction_add(p: discord.RawReactionActionEvent):
-    if p.member and p.member.bot:
-        return
-    if getattr(bot, "rr_id", None) != p.message_id:
-        return
+    if p.member and p.member.bot: return
+    if getattr(bot, "rr_id", None) != p.message_id: return
     g = bot.get_guild(p.guild_id)
-    if not g:
-        return
-    for emoji, rid, _ in RR:
+    if not g: return
+    for emoji, rid, _ in RR_ROLES:
         if str(p.emoji) == emoji:
             r = g.get_role(rid)
             m = p.member or g.get_member(p.user_id)
-            if r and m:
-                await m.add_roles(r)
+            if r and m: await m.add_roles(r, reason="Reaction role")
             break
 
 @bot.event
 async def on_raw_reaction_remove(p: discord.RawReactionActionEvent):
-    if getattr(bot, "rr_id", None) != p.message_id:
-        return
+    if getattr(bot, "rr_id", None) != p.message_id: return
     g = bot.get_guild(p.guild_id)
-    if not g:
-        return
-    for emoji, rid, _ in RR:
+    if not g: return
+    for emoji, rid, _ in RR_ROLES:
         if str(p.emoji) == emoji:
             r = g.get_role(rid)
             m = g.get_member(p.user_id)
-            if r and m:
-                await m.remove_roles(r)
+            if r and m: await m.remove_roles(r, reason="Reaction role removed")
             break
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  HELPER — send clean error
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async def err(interaction: discord.Interaction, msg: str):
-    e = discord.Embed(description=f"> {msg}", color=0xff4444)
-    await interaction.followup.send(embed=e, ephemeral=True)
-
-async def ok_msg(interaction: discord.Interaction, msg: str, color=0x57f287):
-    e = discord.Embed(description=f"> {msg}", color=color)
-    await interaction.followup.send(embed=e, ephemeral=True)
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  GEN DROPDOWN
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ══════════════════════════════════════════════════════════════════
+#  GEN SYSTEM
+# ══════════════════════════════════════════════════════════════════
 class GenSelect(discord.ui.Select):
     def __init__(self, tier: str):
         self.tier = tier
         cnt = sc("roblox", tier)
         super().__init__(
-            placeholder="generate an account  ↓",
+            placeholder="  ↓  select a service to generate",
             options=[discord.SelectOption(
-                label="Roblox",
-                value="roblox",
-                emoji="🎮",
-                description=f"{cnt} accounts in stock")],
-            custom_id=f"gs_{tier}",
+                label="Roblox", value="roblox", emoji="🎮",
+                description=f"{cnt} account{'s' if cnt != 1 else ''} in stock")],
+            custom_id=f"gen_select_{tier}",
             min_values=1, max_values=1)
 
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        tier = self.tier
+    async def callback(self, i: discord.Interaction):
+        await i.response.defer(ephemeral=True)
+        tier   = self.tier
+        member = i.guild.get_member(i.user.id)
 
-        # always get from cache — REST strips activities
-        member = interaction.guild.get_member(interaction.user.id)
         if not member:
-            await err(interaction, "Couldn't find you in cache. Try again in a moment.")
+            await reply(i, "> couldn't load your profile — try again in a moment")
             return
 
-        # ── checks ────────────────────────────────────────────────────────
+        # access checks
         if tier == "free":
-            mr = interaction.guild.get_role(ROLE_MEMBER)
+            mr = i.guild.get_role(ROLE_MEMBER)
             if mr and mr not in member.roles:
-                await err(interaction, "You need the **Member** role to use free gen.")
+                await reply(i, f"> you need the <@&{ROLE_MEMBER}> role to use free gen")
                 return
-            # STATUS CHECK DISABLED — re-enable when ready
+            # STATUS CHECK DISABLED — uncomment to re-enable:
             # if not has_status(member):
-            #     await err(interaction,
-            #         f"Your Discord **custom status** must contain `{REQUIRED_STATUS}`\n\n"
-            #         f"**How to set it:**\n"
-            #         f"Click your avatar → **Set Custom Status** → type `{REQUIRED_STATUS}`\n\n"
-            #         f"Already set it? Use `/checkstatus` to verify the bot can see it.")
+            #     await reply(i, f"> custom status must contain `{REQUIRED_STATUS}`\n-# use `/checkstatus` for help")
             #     return
 
         elif tier == "premium":
-            pr = interaction.guild.get_role(ROLE_PREMIUM)
+            pr = i.guild.get_role(ROLE_PREMIUM)
             if pr and pr not in member.roles:
-                await err(interaction, f"You need **Premium** to use this.\n> Purchase in <#{PREM_BUY_CHANNEL}>")
+                await reply(i, f"> you need <@&{ROLE_PREMIUM}> to use premium gen\n> purchase in <#{PREM_BUY_CHANNEL}>")
                 return
 
         elif tier == "booster":
             if not member.premium_since:
-                await err(interaction, "You must be a **Server Booster** to use this.")
+                await reply(i, "> you need to be a **Server Booster** to use this")
                 return
 
-        # ── cooldown ───────────────────────────────────────────────────────
-        rem = get_cooldown(tier, member.id)
+        # cooldown
+        rem = cd_get(tier, member.id)
         if rem:
-            await err(interaction, f"You're on cooldown for **{fmt(rem)}**\n> {tier.capitalize()} cooldown resets every {TIER_CD[tier]}")
+            ready_ts = f"<t:{int(time.time() + rem)}:R>"
+            await reply(i,
+                f"> ⏳ you're on cooldown — ready {ready_ts}\n"
+                f"-# {tier} resets every {TIER_CD[tier]}",
+                color=0xffaa00)
             return
 
-        # ── stock ──────────────────────────────────────────────────────────
+        # pull account
         account = spop("roblox", tier)
         if not account:
-            await err(interaction, "No stock available for your tier right now.\n> Wait for a restock ping!")
+            await reply(i,
+                f"> ⚠️ **{tier} roblox** is out of stock\n"
+                f"-# a restock ping will go out soon",
+                color=0xffaa00)
             return
 
-        set_cooldown(tier, member.id)
-
+        cd_set(tier, member.id)
         parts    = account.split(":", 1)
         username = parts[0]
         password = parts[1] if len(parts) > 1 else "N/A"
 
-        # ── DM embed ───────────────────────────────────────────────────────
-        dm = discord.Embed(color=TIER_COLOR[tier])
-        dm.set_author(name=f"{TIER_ICON[tier]}  your generated roblox account",
-                      icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-        dm.description = f"-# looking for better accounts? upgrade to **premium** today"
-        dm.add_field(name="username", value=f"```{username}```", inline=False)
-        dm.add_field(name="password", value=f"```{password}```", inline=False)
+        dm = discord.Embed(color=TIER_COLOR[tier], timestamp=utcnow())
+        dm.set_author(
+            name=f"your generated roblox account  ·  {TIER_ICON[tier]} {tier}",
+            icon_url=gicon(i.guild))
+        dm.description = (
+            "> keep this private — do not share with anyone\n"
+            f"-# generated <t:{int(time.time())}:R>"
+        )
+        dm.add_field(name="username", value=f"```{username}```", inline=True)
+        dm.add_field(name="password", value=f"```{password}```", inline=True)
         dm.add_field(name="combo",    value=f"```{account}```",  inline=False)
-        dm.set_footer(text=f"Mercyy Gen  •  next gen in {TIER_CD[tier]}")
+        dm.set_footer(text=f"Mercyy Gen  ·  {tier} tier  ·  next gen in {TIER_CD[tier]}")
 
         try:
             await member.send(embed=dm)
-            conf = discord.Embed(color=TIER_COLOR[tier])
-            conf.set_author(name="account sent to your DMs ✓")
-            conf.description = f"-# next generation available in **{TIER_CD[tier]}**"
-            await interaction.followup.send(embed=conf, ephemeral=True)
+            conf = discord.Embed(color=TIER_COLOR[tier], timestamp=utcnow())
+            conf.set_author(
+                name="✓  account sent to your DMs",
+                icon_url=member.display_avatar.url)
+            conf.description = (
+                f"> change the password immediately after logging in\n"
+                f"-# next gen available in **{TIER_CD[tier]}**"
+            )
+            await i.followup.send(embed=conf, ephemeral=True)
         except discord.Forbidden:
-            dm.set_footer(text=f"⚠️  DMs closed — showing here  •  next gen in {TIER_CD[tier]}")
-            await interaction.followup.send(embed=dm, ephemeral=True)
+            dm.set_footer(text=f"⚠️  DMs closed — shown here · open DMs for next time · next gen in {TIER_CD[tier]}")
+            await i.followup.send(embed=dm, ephemeral=True)
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  GEN PANEL VIEW
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 class GenView(discord.ui.View):
     def __init__(self, tier: str):
         super().__init__(timeout=None)
@@ -259,151 +306,442 @@ class GenView(discord.ui.View):
 
     @discord.ui.button(label="upgrade", emoji="⬆️",
                        style=discord.ButtonStyle.secondary, custom_id="gv_upgrade")
-    async def upgrade(self, i: discord.Interaction, _: discord.ui.Button):
+    async def btn_upgrade(self, i: discord.Interaction, _: discord.ui.Button):
         e = discord.Embed(color=0xf5c518)
-        e.set_author(name="upgrade to premium")
-        e.description = (f"**12h cooldown**  ·  priority stock  ·  premium-only accounts\n\n"
-                         f"-# CashApp `{CASHAPP_TAG}`  •  <#{PREM_BUY_CHANNEL}>")
+        e.set_author(name="upgrade to premium", icon_url=gicon(i.guild))
+        e.description = (
+            "**perks**\n"
+            f"‣  `{TIER_CD['premium']}` cooldown  *(free is `{TIER_CD['free']}`)*\n"
+            f"‣  premium-only account stock\n"
+            f"‣  priority queue\n\n"
+            f"**payment**\n"
+            f"‣  CashApp `{CASHAPP_TAG}`\n"
+            f"‣  open a 🛒 purchase ticket with proof\n\n"
+            f"-# <#{PREM_BUY_CHANNEL}>"
+        )
         await i.response.send_message(embed=e, ephemeral=True)
 
     @discord.ui.button(label="stock", emoji="📦",
                        style=discord.ButtonStyle.secondary, custom_id="gv_stock")
-    async def stock_btn(self, i: discord.Interaction, _: discord.ui.Button):
-        e = discord.Embed(title="stock", color=0x2b2d31)
-        e.add_field(name="🆓  free",    value=f"`{sc('roblox','free')}`",    inline=True)
-        e.add_field(name="⭐  premium", value=f"`{sc('roblox','premium')}`", inline=True)
-        e.add_field(name="⚡  booster", value=f"`{sc('roblox','booster')}`", inline=True)
+    async def btn_stock(self, i: discord.Interaction, _: discord.ui.Button):
+        total = sc("roblox", "free") + sc("roblox", "premium") + sc("roblox", "booster")
+        e = discord.Embed(color=0x2b2d31, timestamp=utcnow())
+        e.set_author(name="live stock", icon_url=gicon(i.guild))
+        e.add_field(name=f"{TIER_ICON['free']}  free",
+                    value=f"`{sc('roblox','free')}` accounts", inline=True)
+        e.add_field(name=f"{TIER_ICON['premium']}  premium",
+                    value=f"`{sc('roblox','premium')}` accounts", inline=True)
+        e.add_field(name=f"{TIER_ICON['booster']}  booster",
+                    value=f"`{sc('roblox','booster')}` accounts", inline=True)
+        e.set_footer(text=f"Mercyy Gen  ·  {total} total")
         await i.response.send_message(embed=e, ephemeral=True)
 
-    @discord.ui.button(label="guide", emoji="❓",
+    @discord.ui.button(label="guide", emoji="📖",
                        style=discord.ButtonStyle.secondary, custom_id="gv_guide")
-    async def guide(self, i: discord.Interaction, _: discord.ui.Button):
+    async def btn_guide(self, i: discord.Interaction, _: discord.ui.Button):
         e = discord.Embed(color=0x5865f2)
-        e.set_author(name="login guide")
-        e.description = ("1. Copy the credentials from your DM\n"
-                         "2. Log into roblox.com\n"
-                         "3. Change the password immediately\n"
-                         "4. Don't share the account\n\n"
-                         "-# Accounts are first-come-first-served")
+        e.set_author(name="how to use your account", icon_url=gicon(i.guild))
+        e.description = (
+            "**1.**  copy the credentials from your DM\n"
+            "**2.**  go to [roblox.com](https://roblox.com) and log in\n"
+            "**3.**  immediately change the **email and password**\n"
+            "**4.**  do not share the account with anyone\n\n"
+            "**if it doesn't work:**\n"
+            "‣  the account may have been claimed already\n"
+            "‣  open a 🛠️ support ticket for help\n\n"
+            "-# accounts are first-come-first-served · no refunds"
+        )
         await i.response.send_message(embed=e, ephemeral=True)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  TICKET VIEWS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-class TicketView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
 
-    @discord.ui.button(label="open a ticket", emoji="🎫",
-                       style=discord.ButtonStyle.danger, custom_id="tv_open")
-    async def open_ticket(self, i: discord.Interaction, _: discord.ui.Button):
-        g  = i.guild
-        m  = i.user
-        ch_name = f"ticket-{m.name.lower()[:18].replace(' ', '-')}"
-        if discord.utils.get(g.text_channels, name=ch_name):
-            await i.response.send_message("> You already have an open ticket!", ephemeral=True)
-            return
+# ══════════════════════════════════════════════════════════════════
+#  TICKET SYSTEM
+# ══════════════════════════════════════════════════════════════════
+
+class TicketCatSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="  ↓  choose a category to open a ticket",
+            options=[
+                discord.SelectOption(label=label.capitalize(), value=label,
+                                     emoji=emoji, description=desc)
+                for emoji, label, desc, _ in TICKET_CATS],
+            custom_id="tcs_main", min_values=1, max_values=1)
+
+    async def callback(self, i: discord.Interaction):
+        await i.response.defer(ephemeral=True)
+        cat   = self.values[0]
+        cdata = next((c for c in TICKET_CATS if c[1] == cat), None)
+        if not cdata: return
+        emoji, label, _, color = cdata
+        g = i.guild; m = i.user
+
+        # duplicate check
+        existing_cid = t_by_user(m.id)
+        if existing_cid:
+            ch = g.get_channel(existing_cid)
+            if ch:
+                await reply(i, f"> you already have an open ticket — {ch.mention}\n-# close it before opening a new one", color=0xffaa00)
+                return
+            else:
+                t_del(existing_cid)
+
+        num     = t_next()
+        ch_name = f"ticket-{num:04d}"
+        tick_cat = (
+            discord.utils.get(g.categories, name="🎫 tickets") or
+            discord.utils.get(g.categories, name="tickets")    or
+            discord.utils.get(g.categories, name="Tickets")
+        )
+
         ow = {
-            g.default_role: discord.PermissionOverwrite(read_messages=False),
-            m: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            g.default_role: discord.PermissionOverwrite(read_messages=False, send_messages=False),
+            m:              discord.PermissionOverwrite(read_messages=True,  send_messages=True,
+                                                        attach_files=True,   embed_links=True,
+                                                        read_message_history=True),
+            g.me:           discord.PermissionOverwrite(read_messages=True,  send_messages=True,
+                                                        manage_channels=True, manage_messages=True,
+                                                        read_message_history=True),
         }
-        pr = g.get_role(ROLE_PREMIUM)
-        if pr:
-            ow[pr] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        ch = await g.create_text_channel(ch_name, overwrites=ow, category=i.channel.category)
-        e = discord.Embed(color=0x2b2d31)
-        e.set_author(name="support ticket")
-        e.description = (f"welcome {m.mention} — describe your issue below\n\n"
-                         f"💎  **premium** → CashApp `{CASHAPP_TAG}`\n"
-                         f"⚡  **booster** → boost the server\n\n"
-                         f"-# staff will be with you shortly")
-        await ch.send(embed=e, view=CloseView())
-        await i.response.send_message(f"> ticket created → {ch.mention}", ephemeral=True)
+        for r in g.roles:
+            if r.permissions.administrator and r != g.default_role:
+                ow[r] = discord.PermissionOverwrite(read_messages=True, send_messages=True,
+                                                     manage_messages=True, read_message_history=True)
+
+        ch = await g.create_text_channel(
+            ch_name, overwrites=ow, category=tick_cat,
+            topic=f"owner:{m.id} | #{num:04d} | {label}",
+            reason=f"Ticket #{num:04d} — {m} ({label})")
+
+        t_save(ch.id, {
+            "number":     num,
+            "user_id":    m.id,
+            "username":   str(m),
+            "category":   label,
+            "color":      color,
+            "opened_at":  utcnow().isoformat(),
+            "claimed_by": None,
+        })
+
+        e = discord.Embed(color=color, timestamp=utcnow())
+        e.set_author(name=f"{emoji}  {label}  ·  ticket #{num:04d}", icon_url=gicon(g))
+
+        body = {
+            "purchase": (
+                f"hey {m.mention}!\n\n"
+                f"**what would you like to purchase?**\n\n"
+                f"💎  **premium**\n"
+                f"    ‣  `{TIER_CD['premium']}` cooldown  ·  premium stock  ·  priority access\n"
+                f"    ‣  CashApp `{CASHAPP_TAG}`\n\n"
+                f"⚡  **booster**\n"
+                f"    ‣  `{TIER_CD['booster']}` cooldown  ·  exclusive stock\n"
+                f"    ‣  just boost the server — access is automatic\n\n"
+                f"-# attach your payment screenshot and staff will verify it shortly"
+            ),
+            "support": (
+                f"hey {m.mention}!\n\n"
+                f"**describe your issue** and staff will help you out\n\n"
+                f"to speed things up, include:\n"
+                f"‣  what happened and when\n"
+                f"‣  what you were doing\n"
+                f"‣  any screenshots or error messages\n\n"
+                f"-# average response time: under 1 hour"
+            ),
+            "report": (
+                f"hey {m.mention}!\n\n"
+                f"**who or what are you reporting?**\n\n"
+                f"please provide:\n"
+                f"‣  their username or user ID\n"
+                f"‣  what they did\n"
+                f"‣  screenshots or evidence\n\n"
+                f"-# all reports are handled confidentially"
+            ),
+            "other": (
+                f"hey {m.mention}!\n\n"
+                f"**what do you need help with?**\n\n"
+                f"-# a staff member will be with you shortly"
+            ),
+        }
+        e.description = body.get(label, body["other"])
+        e.add_field(name="user",     value=m.mention,           inline=True)
+        e.add_field(name="category", value=f"{emoji}  {label}", inline=True)
+        e.add_field(name="ticket",   value=f"`#{num:04d}`",      inline=True)
+        e.set_footer(text="Mercyy Gen  ·  use the buttons below to manage this ticket")
+
+        await ch.send(content=m.mention, embed=e, view=TicketControlView())
+
+        try:
+            dm_e = discord.Embed(color=color, timestamp=utcnow())
+            dm_e.set_author(name=f"ticket #{num:04d} opened  ·  {g.name}", icon_url=gicon(g))
+            dm_e.description = f"your **{label}** ticket has been created\n\n→ {ch.mention}\n\n-# staff will respond shortly"
+            await m.send(embed=dm_e)
+        except discord.Forbidden:
+            pass
+
+        conf = discord.Embed(color=color)
+        conf.set_author(name=f"✓  ticket #{num:04d} created")
+        conf.description = f"> {ch.mention}"
+        await i.followup.send(embed=conf, ephemeral=True)
 
 
-class CloseView(discord.ui.View):
+class TicketPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketCatSelect())
+
+
+class TicketControlView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="close ticket", emoji="🔒",
-                       style=discord.ButtonStyle.danger, custom_id="cv_close")
-    async def close(self, i: discord.Interaction, _: discord.ui.Button):
-        await i.response.send_message("> closing in 5 seconds…")
-        await asyncio.sleep(5)
-        await i.channel.delete()
+    @discord.ui.button(label="claim", emoji="🙋",
+                       style=discord.ButtonStyle.success, custom_id="tcv_claim")
+    async def btn_claim(self, i: discord.Interaction, _: discord.ui.Button):
+        if not is_staff(i.user):
+            await reply(i, "> only staff can claim tickets")
+            return
+        meta = t_get(i.channel.id)
+        if meta and meta.get("claimed_by"):
+            await reply(i, f"> already claimed by <@{meta['claimed_by']}>", color=0xffaa00)
+            return
+        if meta:
+            meta["claimed_by"] = i.user.id
+            t_save(i.channel.id, meta)
+        e = discord.Embed(color=0x57f287, timestamp=utcnow())
+        e.set_author(name=f"claimed  ·  {i.user.display_name}", icon_url=i.user.display_avatar.url)
+        e.description = "-# this ticket is now being handled"
+        await i.response.send_message(embed=e)
+
+    @discord.ui.button(label="add user", emoji="➕",
+                       style=discord.ButtonStyle.secondary, custom_id="tcv_add")
+    async def btn_add(self, i: discord.Interaction, _: discord.ui.Button):
+        if not is_staff(i.user):
+            await reply(i, "> only staff can add users")
+            return
+        await i.response.send_modal(AddUserModal())
+
+    @discord.ui.button(label="remove user", emoji="➖",
+                       style=discord.ButtonStyle.secondary, custom_id="tcv_remove")
+    async def btn_remove(self, i: discord.Interaction, _: discord.ui.Button):
+        if not is_staff(i.user):
+            await reply(i, "> only staff can remove users")
+            return
+        await i.response.send_modal(RemoveUserModal())
+
+    @discord.ui.button(label="transcript", emoji="📋",
+                       style=discord.ButtonStyle.secondary, custom_id="tcv_transcript")
+    async def btn_transcript(self, i: discord.Interaction, _: discord.ui.Button):
+        if not is_staff(i.user):
+            await reply(i, "> only staff can generate transcripts")
+            return
+        await i.response.defer(ephemeral=True)
+        await _build_transcript(i, dm_user=False)
+
+    @discord.ui.button(label="close", emoji="🔒",
+                       style=discord.ButtonStyle.danger, custom_id="tcv_close")
+    async def btn_close(self, i: discord.Interaction, _: discord.ui.Button):
+        meta = t_get(i.channel.id)
+        uid  = meta["user_id"] if meta else None
+        if not is_staff(i.user) and i.user.id != uid:
+            await reply(i, "> only the ticket owner or staff can close this")
+            return
+        e = discord.Embed(color=0xed4245, timestamp=utcnow())
+        e.set_author(name="closing ticket", icon_url=i.user.display_avatar.url)
+        e.description = f"> closed by {i.user.mention}  ·  deleting in **10 seconds**\n-# click cancel to abort"
+        await i.response.send_message(embed=e, view=CancelCloseView())
+        await asyncio.sleep(10)
+        if i.channel:
+            t_del(i.channel.id)
+            try:
+                await i.channel.delete(reason=f"Ticket closed by {i.user}")
+            except Exception:
+                pass
+
+
+async def _build_transcript(i: discord.Interaction, dm_user: bool = True) -> Path | None:
+    meta = t_get(i.channel.id)
+    num  = meta["number"] if meta else "?"
+
+    header = [
+        "╔══════════════════════════════════════════════╗",
+        "║         MERCYY GEN  ·  TICKET TRANSCRIPT     ║",
+        "╚══════════════════════════════════════════════╝",
+        f"Ticket:    #{num:04d}" if isinstance(num, int) else f"Ticket:    {num}",
+        f"Channel:   #{i.channel.name}",
+        f"Category:  {meta.get('category', '—') if meta else '—'}",
+        f"Opened by: {meta.get('username', '—') if meta else '—'}",
+        f"Opened at: {meta.get('opened_at', '—') if meta else '—'}",
+        f"Claimed by: {meta.get('claimed_by', 'unclaimed') if meta else '—'}",
+        f"Generated: {utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+        "─" * 50, "",
+    ]
+    lines = header[:]
+    async for msg in i.channel.history(limit=1000, oldest_first=True):
+        ts_str = msg.created_at.strftime("%Y-%m-%d %H:%M")
+        author = msg.author.display_name
+        if msg.content:
+            lines.append(f"[{ts_str}] {author}: {msg.content}")
+        for emb in msg.embeds:
+            raw = (emb.description or "").replace("-# ", "").replace("> ", "")
+            if raw:
+                lines.append(f"[{ts_str}] [embed] {author}: {raw[:300]}")
+        for att in msg.attachments:
+            lines.append(f"[{ts_str}] [attachment] {author}: {att.url}")
+
+    fpath = TICKET_DIR / f"transcript-{i.channel.name}.txt"
+    fpath.write_text("\n".join(lines), "utf-8")
+
+    if dm_user and meta:
+        user = i.guild.get_member(meta["user_id"])
+        if user:
+            try:
+                dm_e = discord.Embed(color=0x5865f2, timestamp=utcnow())
+                dm_e.set_author(name=f"ticket #{num:04d}  ·  transcript", icon_url=gicon(i.guild))
+                dm_e.description = "-# your ticket has been closed — full transcript attached"
+                await user.send(embed=dm_e, file=discord.File(fpath))
+            except discord.Forbidden:
+                pass
+
+    e = discord.Embed(color=0x57f287, timestamp=utcnow())
+    e.set_author(name="transcript ready")
+    e.description = f"> {len(lines) - len(header)} messages captured"
+    if dm_user and meta:
+        e.description += f"\n-# sent to <@{meta['user_id']}>"
+    await i.followup.send(embed=e, file=discord.File(fpath), ephemeral=True)
+    return fpath
+
+
+class CancelCloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=9)
+
+    @discord.ui.button(label="cancel", emoji="↩️",
+                       style=discord.ButtonStyle.secondary, custom_id="ccv_cancel")
+    async def cancel(self, i: discord.Interaction, btn: discord.ui.Button):
+        btn.disabled = True; self.stop()
+        e = discord.Embed(color=0x57f287)
+        e.description = "> close cancelled"
+        await i.response.edit_message(embed=e, view=self)
+
+
+class AddUserModal(discord.ui.Modal, title="Add User to Ticket"):
+    user_id = discord.ui.TextInput(
+        label="User ID", placeholder="right-click user → Copy ID",
+        min_length=15, max_length=20)
+
+    async def on_submit(self, i: discord.Interaction):
+        try:
+            uid = int(self.user_id.value.strip())
+            m   = i.guild.get_member(uid) or await i.guild.fetch_member(uid)
+            await i.channel.set_permissions(m, read_messages=True, send_messages=True,
+                                             attach_files=True, read_message_history=True)
+            e = discord.Embed(color=0x57f287)
+            e.description = f"> {m.mention} added to the ticket"
+            await i.response.send_message(embed=e)
+        except Exception:
+            await reply(i, "> couldn't find that user — double-check the ID")
+
+
+class RemoveUserModal(discord.ui.Modal, title="Remove User from Ticket"):
+    user_id = discord.ui.TextInput(
+        label="User ID", placeholder="right-click user → Copy ID",
+        min_length=15, max_length=20)
+
+    async def on_submit(self, i: discord.Interaction):
+        try:
+            uid  = int(self.user_id.value.strip())
+            meta = t_get(i.channel.id)
+            if meta and uid == meta.get("user_id"):
+                await reply(i, "> can't remove the ticket owner — close the ticket instead")
+                return
+            m = i.guild.get_member(uid) or await i.guild.fetch_member(uid)
+            await i.channel.set_permissions(m, overwrite=None)
+            e = discord.Embed(color=0x57f287)
+            e.description = f"> {m.mention} removed from the ticket"
+            await i.response.send_message(embed=e)
+        except Exception:
+            await reply(i, "> couldn't find that user — double-check the ID")
 
 
 class PurchaseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="purchase", emoji="💳",
-                       style=discord.ButtonStyle.success, custom_id="pv_buy")
-    async def buy(self, i: discord.Interaction, _: discord.ui.Button):
+    @discord.ui.button(label="buy premium", emoji="💎",
+                       style=discord.ButtonStyle.success, custom_id="pv_premium")
+    async def buy_premium(self, i: discord.Interaction, _: discord.ui.Button):
         e = discord.Embed(color=0xf5c518)
-        e.set_author(name="purchase premium")
-        e.description = (f"**CashApp:** `{CASHAPP_TAG}`\n\n"
-                         "1. send payment\n"
-                         "2. screenshot proof\n"
-                         "3. open a ticket\n"
-                         "4. receive role within 24h")
+        e.set_author(name="buy premium", icon_url=gicon(i.guild))
+        e.description = (
+            f"**CashApp:** `{CASHAPP_TAG}`\n\n"
+            "**1.**  send payment\n"
+            "**2.**  screenshot the receipt\n"
+            "**3.**  open a 🛒 purchase ticket\n"
+            "**4.**  role given within **24 hours**"
+        )
         await i.response.send_message(embed=e, ephemeral=True)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ══════════════════════════════════════════════════════════════════
 #  EVENTS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ══════════════════════════════════════════════════════════════════
 @bot.event
 async def on_ready():
-    print(f"✅  {bot.user}  online")
+    print(f"\n{'═'*50}")
+    print(f"  Mercyy Gen  ·  v3.0  ·  {bot.user}")
+    print(f"  Guilds: {len(bot.guilds)}")
+    print(f"{'═'*50}\n")
     for t in ("free", "premium", "booster"):
         bot.add_view(GenView(t))
-    bot.add_view(TicketView())
-    bot.add_view(CloseView())
+    bot.add_view(TicketPanelView())
+    bot.add_view(TicketControlView())
+    bot.add_view(CancelCloseView())
     bot.add_view(PurchaseView())
     try:
-        s = await bot.tree.sync()
-        print(f"✅  synced {len(s)} commands")
+        synced = await bot.tree.sync()
+        print(f"✅  synced {len(synced)} commands")
     except Exception as ex:
         print(f"❌  sync error: {ex}")
+    await bot.change_presence(
+        activity=discord.Activity(type=discord.ActivityType.watching, name="mercyy gen"))
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ══════════════════════════════════════════════════════════════════
 #  SLASH COMMANDS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ══════════════════════════════════════════════════════════════════
 
-# /checkstatus — clean, just tells them yes or no
-@bot.tree.command(name="checkstatus", description="Check if your status is set correctly")
+@bot.tree.command(name="checkstatus",
+                  description="Check if your status meets the free gen requirement")
 async def checkstatus(interaction: discord.Interaction):
-    member = interaction.guild.get_member(interaction.user.id)
-    if not member:
-        await interaction.response.send_message(
-            embed=discord.Embed(description="> couldn't read your status — try again in a moment", color=0xff4444),
-            ephemeral=True)
+    m = interaction.guild.get_member(interaction.user.id)
+    if not m:
+        await reply(interaction, "> couldn't read your profile — try again in a moment")
         return
-
-    detected = has_status(member)
-
-    if detected:
+    ok     = has_status(m)
+    custom = next((a for a in m.activities if isinstance(a, discord.CustomActivity)), None)
+    current = f"`{custom.name}`" if custom and custom.name else "`(no custom status set)`"
+    if ok:
         e = discord.Embed(color=0x57f287)
-        e.set_author(name="status verified ✓")
-        e.description = f"-# `{REQUIRED_STATUS}` detected — you're good to gen!"
+        e.set_author(name="✓  status verified", icon_url=m.display_avatar.url)
+        e.description = f"your status contains `{REQUIRED_STATUS}` — you're all good!\n\n**current status:** {current}"
     else:
-        # show what was actually found without being harsh
-        custom = next((a for a in member.activities if isinstance(a, discord.CustomActivity)), None)
-        current = f"`{custom.name}`" if custom and custom.name else "`(none set)`"
-        e = discord.Embed(color=0xff4444)
-        e.set_author(name="status not found")
+        e = discord.Embed(color=0xed4245)
+        e.set_author(name="status not found", icon_url=m.display_avatar.url)
         e.description = (
-            f"your current status: {current}\n\n"
-            f"**needs to contain:** `{REQUIRED_STATUS}`\n\n"
-            f"click your avatar → **Set Custom Status** → type `{REQUIRED_STATUS}`\n"
-            f"-# run `/checkstatus` again after setting it")
-
+            f"**current status:** {current}\n"
+            f"**required:** `{REQUIRED_STATUS}`\n\n"
+            f"**how to fix:**\n"
+            f"‣  click your avatar at the bottom-left of Discord\n"
+            f"‣  click **Set Custom Status**\n"
+            f"‣  type or paste `{REQUIRED_STATUS}`\n"
+            f"‣  save, then run `/checkstatus` again\n\n"
+            f"-# status must be set before generating"
+        )
     await interaction.response.send_message(embed=e, ephemeral=True)
 
 
-# /setup_gen
-@bot.tree.command(name="setup_gen", description="Post a gen panel (Admin)")
-@app_commands.describe(tier="free / premium / booster")
+@bot.tree.command(name="setup_gen", description="Post a generator panel (Admin)")
+@app_commands.describe(tier="tier to post")
 @app_commands.choices(tier=[
     app_commands.Choice(name="Free",    value="free"),
     app_commands.Choice(name="Premium", value="premium"),
@@ -413,31 +751,28 @@ async def checkstatus(interaction: discord.Interaction):
 async def setup_gen(interaction: discord.Interaction, tier: app_commands.Choice[str]):
     t   = tier.value
     cnt = sc("roblox", t)
-    icon_url = interaction.guild.icon.url if interaction.guild.icon else None
-
-    extras = {
-        "free":    f"-# must have `{REQUIRED_STATUS}` in your custom status",
-        "premium": f"-# requires <@&{ROLE_PREMIUM}>  ·  purchase in <#{PREM_BUY_CHANNEL}>",
-        "booster": f"-# server boosters only  ·  <#{BOOST_BUY_CHANNEL}>",
+    access = {
+        "free":    f"‣  requires <@&{ROLE_MEMBER}>\n‣  custom status `{REQUIRED_STATUS}` *(currently disabled)*",
+        "premium": f"‣  requires <@&{ROLE_PREMIUM}>\n‣  purchase in <#{PREM_BUY_CHANNEL}>",
+        "booster": f"‣  server boosters only\n‣  info in <#{BOOST_BUY_CHANNEL}>",
     }
-
-    e = discord.Embed(color=TIER_COLOR[t])
-    e.set_author(name=f"mercyy gen  ·  {t} generator", icon_url=icon_url)
+    e = discord.Embed(color=TIER_COLOR[t], timestamp=utcnow())
+    e.set_author(name=f"mercyy gen  ·  {t} generator", icon_url=gicon(interaction.guild))
     e.description = (
         f"### {TIER_ICON[t]}  {t} generator\n"
-        f"> use the dropdown below to generate an account\n\n"
-        f"**stocks**\n`🎮  roblox  —  {cnt} accounts`\n\n"
-        f"**cooldown**\n`⏱️  {TIER_CD[t]} between generations`\n\n"
-        f"**access**\n{extras[t]}"
+        f"> select a service from the dropdown below\n\n"
+        f"**[ stocks ]**  `🎮  roblox  ·  {cnt} accounts`\n"
+        f"**[ cooldown ]**  `{TIER_CD[t]} per generation`\n"
+        f"**[ access ]**\n{access[t]}"
     )
-    e.set_footer(text="Mercyy Gen")
+    e.set_footer(text="Mercyy Gen  ·  accounts sent to your DMs")
     await interaction.channel.send(embed=e, view=GenView(t))
-    await interaction.response.send_message("> gen panel posted!", ephemeral=True)
+    await interaction.response.send_message(f"> ✅  {t} gen panel posted", ephemeral=True)
 
 
-# /restock
-@bot.tree.command(name="restock", description="Restock accounts (Admin)")
-@app_commands.describe(tier="Tier to restock", service="Service", file=".txt — one account per line")
+@bot.tree.command(name="restock", description="Upload accounts to stock (Admin)")
+@app_commands.describe(tier="tier to restock", service="which service",
+                        file=".txt — one account per line")
 @app_commands.choices(
     tier=[
         app_commands.Choice(name="Free",    value="free"),
@@ -452,64 +787,65 @@ async def restock(interaction: discord.Interaction,
                   file: discord.Attachment):
     await interaction.response.defer(ephemeral=True)
     if not file.filename.endswith(".txt"):
-        await interaction.followup.send("> ❌  upload a `.txt` file", ephemeral=True)
+        await interaction.followup.send("> ❌  attach a `.txt` file", ephemeral=True)
         return
-    raw  = (await file.read()).decode("utf-8", errors="ignore")
-    new  = [l.strip() for l in raw.splitlines() if l.strip()]
+    raw = (await file.read()).decode("utf-8", errors="ignore")
+    new = [l.strip() for l in raw.splitlines() if l.strip()]
     if not new:
-        await interaction.followup.send("> ❌  file is empty", ephemeral=True)
+        await interaction.followup.send("> ❌  the file is empty", ephemeral=True)
         return
     sadd(service.value, tier.value, new)
     total = sc(service.value, tier.value)
-
     ch = bot.get_channel(RESTOCK_CHANNEL)
     if ch:
         rr   = interaction.guild.get_role(ROLE_RESTOCK)
         ping = rr.mention if rr else ""
-        re   = discord.Embed(color=TIER_COLOR[tier.value])
-        re.set_author(name="restock", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-        re.description = (f"**{TIER_ICON[tier.value]}  {tier.name} roblox** has been restocked\n\n"
-                          f"`+{len(new)} added  ·  {total} total`")
+        re   = discord.Embed(color=TIER_COLOR[tier.value], timestamp=utcnow())
+        re.set_author(name="restock", icon_url=gicon(interaction.guild))
+        re.description = (
+            f"**{TIER_ICON[tier.value]}  {tier.name} roblox** has been restocked!\n\n"
+            f"`+{len(new)} accounts added  ·  {total} total in stock`"
+        )
         re.set_footer(text="Mercyy Gen")
         await ch.send(content=ping, embed=re)
-
     await interaction.followup.send(
-        f"> ✅  added `{len(new)}` to **{tier.name} roblox**  ·  `{total}` total",
+        f"> ✅  restocked **{tier.name} roblox** — `+{len(new)}` added, `{total}` total",
         ephemeral=True)
 
 
-# /stock
-@bot.tree.command(name="stock", description="View current stock counts")
+@bot.tree.command(name="stock", description="View live stock counts")
 async def stock_cmd(interaction: discord.Interaction):
-    e = discord.Embed(color=0x2b2d31)
-    e.set_author(name="stock")
-    e.add_field(name="🆓  free",    value=f"`{sc('roblox','free')}` accs",    inline=True)
-    e.add_field(name="⭐  premium", value=f"`{sc('roblox','premium')}` accs", inline=True)
-    e.add_field(name="⚡  booster", value=f"`{sc('roblox','booster')}` accs", inline=True)
-    e.set_footer(text="Mercyy Gen")
+    totals = {t: sc("roblox", t) for t in ("free", "premium", "booster")}
+    grand  = sum(totals.values())
+    e = discord.Embed(color=0x2b2d31, timestamp=utcnow())
+    e.set_author(name="stock overview", icon_url=gicon(interaction.guild))
+    for t, n in totals.items():
+        bar = "█" * min(n // 5, 10) + "░" * max(0, 10 - n // 5)
+        e.add_field(name=f"{TIER_ICON[t]}  {t}",
+                    value=f"`{bar}`\n`{n} accounts`", inline=True)
+    e.set_footer(text=f"Mercyy Gen  ·  {grand} accounts total")
     await interaction.response.send_message(embed=e, ephemeral=True)
 
 
-# /cooldown
-@bot.tree.command(name="cooldown", description="Check your cooldowns")
+@bot.tree.command(name="cooldown", description="Check your gen cooldowns")
 async def cooldown_cmd(interaction: discord.Interaction):
     uid   = interaction.user.id
     lines = []
     for t in ("free", "premium", "booster"):
-        rem = get_cooldown(t, uid)
+        rem = cd_get(t, uid)
         if rem:
-            lines.append(f"{TIER_ICON[t]}  **{t}** — `{fmt(rem)}` remaining")
+            ready_ts = f"<t:{int(time.time() + rem)}:R>"
+            lines.append(f"{TIER_ICON[t]}  **{t}**  —  ⏳ ready {ready_ts}")
         else:
-            lines.append(f"{TIER_ICON[t]}  **{t}** — `ready`")
-    e = discord.Embed(color=0x5865f2)
-    e.set_author(name="your cooldowns")
+            lines.append(f"{TIER_ICON[t]}  **{t}**  —  ✅ `ready to gen`")
+    e = discord.Embed(color=0x5865f2, timestamp=utcnow())
+    e.set_author(name="your cooldowns", icon_url=interaction.user.display_avatar.url)
     e.description = "\n".join(lines)
     await interaction.response.send_message(embed=e, ephemeral=True)
 
 
-# /reset_cooldown
 @bot.tree.command(name="reset_cooldown", description="Reset a user's cooldown (Admin)")
-@app_commands.describe(member="User", tier="Tier")
+@app_commands.describe(member="user to reset", tier="tier to reset")
 @app_commands.choices(tier=[
     app_commands.Choice(name="Free",    value="free"),
     app_commands.Choice(name="Premium", value="premium"),
@@ -522,59 +858,63 @@ async def reset_cd(interaction: discord.Interaction,
                    tier: app_commands.Choice[str]):
     tiers = list(COOLDOWNS) if tier.value == "all" else [tier.value]
     for t in tiers:
-        cooldown_store[t].pop(member.id, None)
+        cd_store[t].pop(member.id, None)
     await interaction.response.send_message(
         f"> ✅  reset **{tier.name}** cooldown for {member.mention}", ephemeral=True)
 
 
-# /setup_reaction_roles
-@bot.tree.command(name="setup_reaction_roles", description="Post reaction role panel (Admin)")
+@bot.tree.command(name="setup_reaction_roles",
+                  description="Post the notification ping roles panel (Admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_rr(interaction: discord.Interaction):
+    rows = "\n".join(f"{emoji}  —  **{label}**" for emoji, _, label in RR_ROLES)
     e = discord.Embed(color=0x2b2d31)
-    e.set_author(name="notification roles",
-                 icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-    e.description = (
-        "\n".join(f"{emoji}  —  **{label}**" for emoji, _, label in RR) +
-        "\n\n-# react to get a role  ·  react again to remove it"
-    )
+    e.set_author(name="notification roles", icon_url=gicon(interaction.guild))
+    e.description = f"{rows}\n\n-# react to get a role  ·  react again to remove it"
     msg = await interaction.channel.send(embed=e)
-    for emoji, _, _ in RR:
+    for emoji, _, _ in RR_ROLES:
         await msg.add_reaction(emoji)
     bot.rr_id = msg.id
     await interaction.response.send_message(
-        f"> ✅  posted  ·  save this id: `{msg.id}`", ephemeral=True)
+        f"> ✅  posted — run `/set_rr_message {msg.id}` after every bot restart",
+        ephemeral=True)
 
 
-# /set_rr_message
-@bot.tree.command(name="set_rr_message", description="Re-link reaction roles after restart (Admin)")
-@app_commands.describe(message_id="Message ID of the reaction role panel")
+@bot.tree.command(name="set_rr_message",
+                  description="Re-link reaction roles after a restart (Admin)")
+@app_commands.describe(message_id="message ID of the reaction role panel")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_rr(interaction: discord.Interaction, message_id: str):
     try:
         bot.rr_id = int(message_id)
-        await interaction.response.send_message(f"> ✅  linked to `{message_id}`", ephemeral=True)
+        await interaction.response.send_message(
+            f"> ✅  reaction roles linked to `{message_id}`", ephemeral=True)
     except ValueError:
-        await interaction.response.send_message("> ❌  invalid id", ephemeral=True)
+        await interaction.response.send_message("> ❌  invalid message ID", ephemeral=True)
 
 
-# /setup_tickets
-@bot.tree.command(name="setup_tickets", description="Post ticket panel (Admin)")
+@bot.tree.command(name="setup_tickets",
+                  description="Post the ticket support panel (Admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_tickets(interaction: discord.Interaction):
-    e = discord.Embed(color=0xed4245)
-    e.set_author(name="support & purchases",
-                 icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-    e.description = (f"open a ticket for support or to purchase\n\n"
-                     f"💎  **premium** → CashApp `{CASHAPP_TAG}`\n"
-                     f"⚡  **booster** → boost the server\n\n"
-                     f"-# a staff member will assist you shortly")
-    await interaction.channel.send(embed=e, view=TicketView())
-    await interaction.response.send_message("> ✅  posted!", ephemeral=True)
+    e = discord.Embed(color=0x2b2d31)
+    e.set_author(name="mercyy gen  ·  support", icon_url=gicon(interaction.guild))
+    e.description = (
+        "### 🎫  need help? open a ticket\n"
+        "> choose a category from the dropdown below\n\n"
+        "🛒  **purchase**  —  buy premium or booster access\n"
+        "🛠️  **support**   —  account help or general issues\n"
+        "⚠️  **report**    —  report a user or bug\n"
+        "💬  **other**     —  anything else\n\n"
+        "-# tickets are typically answered within a few hours"
+    )
+    e.set_footer(text="Mercyy Gen")
+    await interaction.channel.send(embed=e, view=TicketPanelView())
+    await interaction.response.send_message("> ✅  ticket panel posted", ephemeral=True)
 
 
-# /setup_purchase
-@bot.tree.command(name="setup_purchase", description="Post purchase panel (Admin)")
+@bot.tree.command(name="setup_purchase",
+                  description="Post a purchase info panel (Admin)")
 @app_commands.describe(product="premium or booster")
 @app_commands.choices(product=[
     app_commands.Choice(name="Premium", value="premium"),
@@ -582,35 +922,41 @@ async def setup_tickets(interaction: discord.Interaction):
 ])
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_purchase(interaction: discord.Interaction, product: app_commands.Choice[str]):
+    ic = gicon(interaction.guild)
     if product.value == "booster":
-        tiers_text = "\n".join(
-            f"`{b} boost{'s' if b > 1 else ''}`  →  **{l}** access"
+        tiers = "\n".join(
+            f"‣  `{b} boost{'s' if b > 1 else ''}`  →  **{l}** access"
             for b, l in BOOST_TIERS.items())
         e = discord.Embed(color=0xff73fa)
-        e.set_author(name="booster generator access",
-                     icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-        e.description = (f"boost the server to unlock the booster generator\n\n"
-                         f"**boost tiers**\n{tiers_text}\n\n"
-                         f"-# access is granted automatically when you boost")
+        e.set_author(name="booster generator access", icon_url=ic)
+        e.description = (
+            f"boost the server to unlock the **booster generator**\n\n"
+            f"**boost tiers**\n{tiers}\n\n"
+            f"‣  `{TIER_CD['booster']}` cooldown\n"
+            f"‣  exclusive stock\n\n"
+            f"-# access is granted automatically — no purchase needed"
+        )
         await interaction.channel.send(embed=e)
     else:
         e = discord.Embed(color=0xf5c518)
-        e.set_author(name="buy premium",
-                     icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-        e.description = (f"**what you get**\n"
-                         f"`⏱️`  12h cooldown  *(vs 24h free)*\n"
-                         f"`📦`  premium-only stock\n"
-                         f"`⭐`  priority access\n\n"
-                         f"**how to buy**\n"
-                         f"send payment to CashApp `{CASHAPP_TAG}` then open a ticket with proof\n\n"
-                         f"-# role given within 24 hours of verification")
+        e.set_author(name="buy premium", icon_url=ic)
+        e.description = (
+            f"**perks**\n"
+            f"‣  `{TIER_CD['premium']}` cooldown  *(free is `{TIER_CD['free']}`)*\n"
+            f"‣  premium-only account stock\n"
+            f"‣  priority access\n\n"
+            f"**how to buy**\n"
+            f"‣  send payment to CashApp **`{CASHAPP_TAG}`**\n"
+            f"‣  open a 🛒 purchase ticket with screenshot proof\n"
+            f"‣  role given within **24 hours** of verification\n\n"
+            f"-# payments are non-refundable"
+        )
         await interaction.channel.send(embed=e, view=PurchaseView())
-    await interaction.response.send_message("> ✅  posted!", ephemeral=True)
+    await interaction.response.send_message("> ✅  purchase panel posted", ephemeral=True)
 
 
-# /clear_stock
-@bot.tree.command(name="clear_stock", description="Clear stock (Admin)")
-@app_commands.describe(service="Service", tier="Tier")
+@bot.tree.command(name="clear_stock", description="Wipe stock for a tier (Admin)")
+@app_commands.describe(service="service", tier="tier to clear")
 @app_commands.choices(
     service=[app_commands.Choice(name="Roblox", value="roblox")],
     tier=[
@@ -630,23 +976,94 @@ async def clear_stock(interaction: discord.Interaction,
         f"> ✅  cleared **{tier.name} {service.name}**", ephemeral=True)
 
 
-# ── error handler ──────────────────────────────────────────
+@bot.tree.command(name="add", description="Add a user to this ticket (Admin)")
+@app_commands.describe(member="user to add")
+@app_commands.checks.has_permissions(administrator=True)
+async def add_cmd(interaction: discord.Interaction, member: discord.Member):
+    await interaction.channel.set_permissions(
+        member, read_messages=True, send_messages=True,
+        attach_files=True, read_message_history=True)
+    e = discord.Embed(color=0x57f287)
+    e.description = f"> {member.mention} added to the ticket"
+    await interaction.response.send_message(embed=e)
+
+
+@bot.tree.command(name="remove", description="Remove a user from this ticket (Admin)")
+@app_commands.describe(member="user to remove")
+@app_commands.checks.has_permissions(administrator=True)
+async def remove_cmd(interaction: discord.Interaction, member: discord.Member):
+    meta = t_get(interaction.channel.id)
+    if meta and member.id == meta.get("user_id"):
+        await reply(interaction, "> can't remove the ticket owner — close the ticket instead")
+        return
+    await interaction.channel.set_permissions(member, overwrite=None)
+    e = discord.Embed(color=0x57f287)
+    e.description = f"> {member.mention} removed from the ticket"
+    await interaction.response.send_message(embed=e)
+
+
+@bot.tree.command(name="rename", description="Rename this ticket channel (Admin)")
+@app_commands.describe(name="new channel name")
+@app_commands.checks.has_permissions(administrator=True)
+async def rename_cmd(interaction: discord.Interaction, name: str):
+    old = interaction.channel.name
+    await interaction.channel.edit(name=name.lower().replace(" ", "-"))
+    e = discord.Embed(color=0x57f287)
+    e.description = f"> renamed `#{old}` → `#{name}`"
+    await interaction.response.send_message(embed=e, ephemeral=True)
+
+
+@bot.tree.command(name="ticket_info", description="View info about this ticket (Admin)")
+@app_commands.checks.has_permissions(administrator=True)
+async def ticket_info(interaction: discord.Interaction):
+    meta = t_get(interaction.channel.id)
+    if not meta:
+        await reply(interaction, "> this doesn't appear to be a ticket channel")
+        return
+    cat   = next((c for c in TICKET_CATS if c[1] == meta.get("category")), None)
+    color = cat[3] if cat else 0x2b2d31
+    e = discord.Embed(color=color, timestamp=utcnow())
+    e.set_author(name=f"ticket #{meta['number']:04d}", icon_url=gicon(interaction.guild))
+    e.add_field(name="user",     value=f"<@{meta['user_id']}>",              inline=True)
+    e.add_field(name="category", value=meta.get("category", "—"),            inline=True)
+    e.add_field(name="claimed",
+                value=f"<@{meta['claimed_by']}>" if meta.get("claimed_by") else "unclaimed",
+                inline=True)
+    opened = meta.get("opened_at", "")
+    if opened:
+        try:
+            dt = datetime.fromisoformat(opened)
+            e.add_field(name="opened", value=f"<t:{int(dt.timestamp())}:R>", inline=True)
+        except Exception:
+            pass
+    await interaction.response.send_message(embed=e, ephemeral=True)
+
+
+@bot.tree.command(name="stats", description="View bot statistics (Admin)")
+@app_commands.checks.has_permissions(administrator=True)
+async def stats_cmd(interaction: discord.Interaction):
+    total_stock = sum(sc("roblox", t) for t in ("free", "premium", "booster"))
+    e = discord.Embed(color=0x2b2d31, timestamp=utcnow())
+    e.set_author(name="mercyy gen  ·  stats", icon_url=gicon(interaction.guild))
+    e.add_field(name="total stock",   value=f"`{total_stock}` accounts", inline=True)
+    e.add_field(name="total tickets", value=f"`{t_total()}` created",    inline=True)
+    e.add_field(name="users tracked",
+                value=f"`{sum(len(v) for v in cd_store.values())}` users", inline=True)
+    e.add_field(name="free",    value=f"`{sc('roblox','free')}`",    inline=True)
+    e.add_field(name="premium", value=f"`{sc('roblox','premium')}`", inline=True)
+    e.add_field(name="booster", value=f"`{sc('roblox','booster')}`", inline=True)
+    e.set_footer(text="Mercyy Gen  ·  v3.0")
+    await interaction.response.send_message(embed=e, ephemeral=True)
+
+
 @bot.tree.error
-async def on_err(interaction: discord.Interaction, error):
+async def on_err(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
-        try:
-            await interaction.response.send_message(
-                embed=discord.Embed(description="> you don't have permission to use this", color=0xff4444),
-                ephemeral=True)
-        except Exception:
-            pass
+        await reply(interaction, "> you don't have permission to use this command")
+    elif isinstance(error, app_commands.CommandOnCooldown):
+        await reply(interaction, f"> slow down — retry in `{error.retry_after:.1f}s`", color=0xffaa00)
     else:
-        try:
-            await interaction.response.send_message(
-                embed=discord.Embed(description=f"> something went wrong: `{error}`", color=0xff4444),
-                ephemeral=True)
-        except Exception:
-            pass
+        await reply(interaction, f"> something went wrong\n```\n{error}\n```")
         raise error
 
 
